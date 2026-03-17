@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import Baileys, {
+import makeWASocket, {
   DisconnectReason,
   delay,
   useMultiFileAuthState,
@@ -38,6 +38,7 @@ app.get('/pair', async (req, res) => {
     const code = await startSession(phone, 'pair')
     res.json({ code })
   } catch (err) {
+    console.error("Pairing Error:", err)
     res.status(500).json({ error: 'Pairing Failed' })
   }
 })
@@ -48,6 +49,7 @@ app.get('/getqr', async (req, res) => {
     const qrData = await startSession(null, 'qr')
     res.json({ qr: qrData })
   } catch (err) {
+    console.error("QR Error:", err)
     res.status(500).json({ error: 'QR Failed' })
   }
 })
@@ -59,7 +61,10 @@ async function startSession(phone, method) {
   const { version } = await fetchLatestBaileysVersion()
 
   return new Promise(async (resolve, reject) => {
-    const sock = Baileys.default({
+    // FIX: Handling the Baileys import correctly for ESM
+    const socketFunction = makeWASocket.default || makeWASocket;
+    
+    const sock = socketFunction({
       version,
       printQRInTerminal: false,
       logger: pino({ level: 'silent' }),
@@ -77,14 +82,15 @@ async function startSession(phone, method) {
 
       // Handle QR Method
       if (method === 'qr' && qr) {
-        const qrImage = await QRCode.toDataURL(qr)
-        resolve(qrImage)
+        try {
+          const qrImage = await QRCode.toDataURL(qr)
+          resolve(qrImage)
+        } catch (e) { reject(e) }
       }
 
       // Handle Pairing Method
       if (method === 'pair' && !sock.authState.creds.registered) {
-        // Essential: Wait a moment for the socket to be "Connecting"
-        await delay(1500) 
+        await delay(3000) 
         try {
           const code = await sock.requestPairingCode(phone.replace(/[^0-9]/g, ''))
           resolve(code)
@@ -95,22 +101,30 @@ async function startSession(phone, method) {
 
       if (connection === 'open') {
         await delay(5000)
-        const rawCreds = fs.readFileSync(`${sessionFolder}/creds.json`, 'utf-8')
-        const output = await pastebin.createPaste(rawCreds, 'JOEL-XMD-SESSION')
-        const sessi = 'JOEL~XMD~' + output.split('https://pastebin.com/')[1]
-        
-        await sock.sendMessage(sock.user.id, { text: sessi })
-        
-        // Clean up
-        setTimeout(() => {
-            fs.rmSync(sessionFolder, { recursive: true, force: true })
-            process.send('reset')
-        }, 3000)
+        try {
+          const rawCreds = fs.readFileSync(`${sessionFolder}/creds.json`, 'utf-8')
+          const output = await pastebin.createPaste(rawCreds, 'JOEL-XMD-SESSION')
+          const sessi = 'JOEL~XMD~' + output.split('https://pastebin.com/')[1]
+          
+          await sock.sendMessage(sock.user.id, { text: sessi })
+          
+          setTimeout(() => {
+              if (fs.existsSync(sessionFolder)) {
+                fs.rmSync(sessionFolder, { recursive: true, force: true })
+              }
+              process.send('reset')
+          }, 3000)
+        } catch (e) {
+          console.error("Connection Open Error:", e)
+        }
       }
 
       if (connection === 'close') {
         let reason = new Boom(lastDisconnect?.error)?.output.statusCode
-        if (reason !== DisconnectReason.loggedOut) process.send('reset')
+        if (reason !== DisconnectReason.loggedOut) {
+          // If using cluster/joel.js, this will trigger a restart
+          if (process.send) process.send('reset')
+        }
       }
     })
   })
