@@ -30,7 +30,6 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
 app.get('/code', (req, res) => res.sendFile(path.join(__dirname, 'pair.html')))
 app.get('/qr', (req, res) => res.sendFile(path.join(__dirname, 'qr.html')))
 
-// API for Pairing
 app.get('/pair', async (req, res) => {
   let phone = req.query.phone
   if (!phone) return res.json({ error: 'Provide Phone Number' })
@@ -38,30 +37,33 @@ app.get('/pair', async (req, res) => {
     const code = await startSession(phone, 'pair')
     res.json({ code })
   } catch (err) {
-    console.error("Pairing Error:", err)
     res.status(500).json({ error: 'Pairing Failed' })
   }
 })
 
-// API for QR
 app.get('/getqr', async (req, res) => {
   try {
     const qrData = await startSession(null, 'qr')
     res.json({ qr: qrData })
   } catch (err) {
-    console.error("QR Error:", err)
     res.status(500).json({ error: 'QR Failed' })
   }
 })
 
 // --- CORE LOGIC ---
 async function startSession(phone, method) {
-  const sessionFolder = `./auth/${Math.random().toString(36).substring(7)}`
+  // Use a unique ID for each attempt to avoid cache conflicts
+  const id = Math.random().toString(36).substring(7);
+  const sessionFolder = path.join(__dirname, 'auth', id);
+  
+  if (!fs.existsSync(sessionFolder)) {
+    fs.mkdirSync(sessionFolder, { recursive: true });
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder)
   const { version } = await fetchLatestBaileysVersion()
 
   return new Promise(async (resolve, reject) => {
-    // FIX: Handling the Baileys import correctly for ESM
     const socketFunction = makeWASocket.default || makeWASocket;
     
     const sock = socketFunction({
@@ -80,7 +82,7 @@ async function startSession(phone, method) {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
-      // Handle QR Method
+      // Handle QR
       if (method === 'qr' && qr) {
         try {
           const qrImage = await QRCode.toDataURL(qr)
@@ -88,41 +90,43 @@ async function startSession(phone, method) {
         } catch (e) { reject(e) }
       }
 
-      // Handle Pairing Method
+      // Handle Pairing Code
       if (method === 'pair' && !sock.authState.creds.registered) {
-        await delay(3000) 
+        // Reduced delay to prevent timeout before user enters code
+        await delay(1500) 
         try {
           const code = await sock.requestPairingCode(phone.replace(/[^0-9]/g, ''))
           resolve(code)
-        } catch (e) {
-          reject(e)
-        }
+        } catch (e) { reject(e) }
       }
 
       if (connection === 'open') {
-        await delay(5000)
+        // Essential: Wait for the session to fully "settle" on WA servers
+        await delay(10000)
         try {
-          const rawCreds = fs.readFileSync(`${sessionFolder}/creds.json`, 'utf-8')
+          const credsPath = path.join(sessionFolder, 'creds.json');
+          const rawCreds = fs.readFileSync(credsPath, 'utf-8')
           const output = await pastebin.createPaste(rawCreds, 'JOEL-XMD-SESSION')
           const sessi = 'JOEL~XMD~' + output.split('https://pastebin.com/')[1]
           
           await sock.sendMessage(sock.user.id, { text: sessi })
           
+          // Cleanup after success
           setTimeout(() => {
-              if (fs.existsSync(sessionFolder)) {
+              try {
                 fs.rmSync(sessionFolder, { recursive: true, force: true })
-              }
-              process.send('reset')
-          }, 3000)
+              } catch (e) {}
+              if (process.send) process.send('reset')
+          }, 5000)
         } catch (e) {
-          console.error("Connection Open Error:", e)
+          console.error("Success handling error:", e)
         }
       }
 
       if (connection === 'close') {
         let reason = new Boom(lastDisconnect?.error)?.output.statusCode
-        if (reason !== DisconnectReason.loggedOut) {
-          // If using cluster/joel.js, this will trigger a restart
+        // ONLY reset if it's not a temporary disconnect during pairing
+        if (reason !== DisconnectReason.loggedOut && connection !== 'connecting') {
           if (process.send) process.send('reset')
         }
       }
