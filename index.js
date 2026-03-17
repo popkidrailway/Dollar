@@ -3,7 +3,8 @@ import Baileys, {
   DisconnectReason,
   delay,
   useMultiFileAuthState,
-  makeCacheableSignalKeyStore
+  makeCacheableSignalKeyStore,
+  fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys'
 import cors from 'cors'
 import express from 'express'
@@ -12,119 +13,107 @@ import PastebinAPI from 'pastebin-js'
 import path, { dirname } from 'path'
 import pino from 'pino'
 import { fileURLToPath } from 'url'
+import QRCode from 'qrcode'
 
-let pastebin = new PastebinAPI('EMWTMkQAVfJa9kM-MRUrxd5Oku1U7pgL')
+let pastebin = new PastebinAPI('dwT_LzCY4PZx1YEDfFUMJ4eYFuSH-mco')
 const app = express()
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 app.use(cors())
-app.use((req, res, next) => {
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
-  next()
-})
+app.use(express.static(__dirname))
 
 let PORT = process.env.PORT || 8000
 
-function createRandomId() {
-  return Math.random().toString(36).substring(2, 12)
-}
-
-async function startnigg(phone) {
-  let sessionFolder = `./auth/${createRandomId()}`
-  
-  return new Promise(async (resolve, reject) => {
-    try {
-      if (!fs.existsSync(sessionFolder)) {
-        fs.mkdirSync(sessionFolder, { recursive: true })
-      }
-
-      const { state, saveCreds } = await useMultiFileAuthState(sessionFolder)
-
-      const negga = Baileys.default({
-        printQRInTerminal: false,
-        logger: pino({ level: 'silent' }),
-        // Critical: 'Chrome' + 'Mobile' is usually required for pairing codes now
-        browser: ["Ubuntu", "Chrome", "20.0.04"],
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
-        },
-      })
-
-      if (!negga.authState.creds.registered) {
-        let phoneNumber = phone ? phone.replace(/[^0-9]/g, '') : ''
-        if (phoneNumber.length < 10) {
-          return reject(new Error('Invalid Phone Number!'))
-        }
-
-        setTimeout(async () => {
-          try {
-            let code = await negga.requestPairingCode(phoneNumber)
-            console.log(`Pairing Code for ${phoneNumber}: ${code}`)
-            resolve(code)
-          } catch (err) {
-            reject(new Error('Error requesting pairing code'))
-          }
-        }, 3000)
-      }
-
-      negga.ev.on('creds.update', saveCreds)
-
-      negga.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update
-
-        if (connection === 'open') {
-          await delay(5000)
-          try {
-            const rawCreds = fs.readFileSync(`${sessionFolder}/creds.json`, 'utf-8')
-            const output = await pastebin.createPaste(rawCreds, 'JOEL-XMD-SESSION')
-            const sessi = 'JOEL~XMD~' + output.split('https://pastebin.com/')[1]
-            
-            await negga.sendMessage(negga.user.id, { 
-                text: sessi 
-            })
-            
-            await negga.sendMessage(negga.user.id, {
-              text: `*╭──────────────━┈⊷*\n*║ ᴊᴏᴇʟ-xᴍᴅ sᴇssɪᴏɴ ɪᴅ*\n*╰───────────────━⊷*\n\n*sᴇssɪᴏɴ ᴄᴏɴɴᴇᴄᴛᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ!*\n\n*ᴏᴡɴᴇʀ:* Popkid\n*ᴛʜᴀɴᴋs ғᴏʀ ᴄʜᴏᴏsɪɴɢ ᴊᴏᴇʟ-ᴍᴅ*`
-            })
-
-            console.log('Session Uploaded:', sessi)
-            
-            // Wait before cleanup
-            await delay(2000)
-            fs.rmSync(sessionFolder, { recursive: true, force: true })
-            process.send('reset')
-          } catch (e) {
-            console.error('Upload Error:', e)
-          }
-        }
-
-        if (connection === 'close') {
-          let reason = new Boom(lastDisconnect?.error)?.output.statusCode
-          console.log(`Connection closed: ${reason}`)
-          if (reason !== DisconnectReason.loggedOut) {
-             process.send('reset')
-          }
-        }
-      })
-
-    } catch (error) {
-      reject(error)
-    }
-  })
-}
-
+// --- ROUTES ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
+app.get('/code', (req, res) => res.sendFile(path.join(__dirname, 'pair.html')))
+app.get('/qr', (req, res) => res.sendFile(path.join(__dirname, 'qr.html')))
+
+// API for Pairing
 app.get('/pair', async (req, res) => {
   let phone = req.query.phone
-  if (!phone) return res.json({ error: 'Please Provide Phone Number' })
+  if (!phone) return res.json({ error: 'Provide Phone Number' })
   try {
-    const code = await startnigg(phone)
+    const code = await startSession(phone, 'pair')
     res.json({ code })
-  } catch (error) {
+  } catch (err) {
     res.status(500).json({ error: 'Pairing Failed' })
   }
 })
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
+// API for QR
+app.get('/getqr', async (req, res) => {
+  try {
+    const qrData = await startSession(null, 'qr')
+    res.json({ qr: qrData })
+  } catch (err) {
+    res.status(500).json({ error: 'QR Failed' })
+  }
+})
+
+// --- CORE LOGIC ---
+async function startSession(phone, method) {
+  const sessionFolder = `./auth/${Math.random().toString(36).substring(7)}`
+  const { state, saveCreds } = await useMultiFileAuthState(sessionFolder)
+  const { version } = await fetchLatestBaileysVersion()
+
+  return new Promise(async (resolve, reject) => {
+    const sock = Baileys.default({
+      version,
+      printQRInTerminal: false,
+      logger: pino({ level: 'silent' }),
+      browser: ["Ubuntu", "Chrome", "20.0.04"],
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+      }
+    })
+
+    sock.ev.on('creds.update', saveCreds)
+
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update
+
+      // Handle QR Method
+      if (method === 'qr' && qr) {
+        const qrImage = await QRCode.toDataURL(qr)
+        resolve(qrImage)
+      }
+
+      // Handle Pairing Method
+      if (method === 'pair' && !sock.authState.creds.registered) {
+        // Essential: Wait a moment for the socket to be "Connecting"
+        await delay(1500) 
+        try {
+          const code = await sock.requestPairingCode(phone.replace(/[^0-9]/g, ''))
+          resolve(code)
+        } catch (e) {
+          reject(e)
+        }
+      }
+
+      if (connection === 'open') {
+        await delay(5000)
+        const rawCreds = fs.readFileSync(`${sessionFolder}/creds.json`, 'utf-8')
+        const output = await pastebin.createPaste(rawCreds, 'JOEL-XMD-SESSION')
+        const sessi = 'JOEL~XMD~' + output.split('https://pastebin.com/')[1]
+        
+        await sock.sendMessage(sock.user.id, { text: sessi })
+        
+        // Clean up
+        setTimeout(() => {
+            fs.rmSync(sessionFolder, { recursive: true, force: true })
+            process.send('reset')
+        }, 3000)
+      }
+
+      if (connection === 'close') {
+        let reason = new Boom(lastDisconnect?.error)?.output.statusCode
+        if (reason !== DisconnectReason.loggedOut) process.send('reset')
+      }
+    })
+  })
+}
+
+app.listen(PORT, () => console.log(`JOEL-XMD Online: ${PORT}`))
