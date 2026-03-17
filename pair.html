@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JOEL-XMD Pairing</title>
+    <style>
+        body { font-family: 'Arial', sans-serif; background: #000; color: #fff; text-align: center; padding: 20px; }
+        .box { background: #111; border: 2px solid #ff00ff; padding: 20px; border-radius: 10px; max-width: 400px; margin: auto; }
+        input { width: 80%; padding: 10px; margin: 10px 0; border-radius: 5px; border: none; }
+        button { background: #ff00ff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        #code-display { font-size: 2em; color: #00ffff; margin-top: 20px; font-weight: bold; letter-spacing: 5px; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Pairing Code</h2>
+        <p>Enter number with country code (e.g. 254...)</p>
+        <input type="number" id="phone" placeholder="2547XXXXXXXX">
+        <br>
+        <button onclick="getPairingCode()">GET CODE</button>
+        <div id="loading" style="display:none;">Generating...</div>
+        <div id="code-display"></div>
+    </div>
+
+    <script>
+        async function getPairingCode() {
+            const phone = document.getElementById('phone').value;
+            const display = document.getElementById('code-display');
+            const loader = document.getElementById('loading');
+            
+            if(!phone) return alert("Enter Number!");
+            
+            loader.style.display = 'block';
+            display.innerText = '';
+
+            try {
+                const response = await fetch(`/pair?phone=${phone}`);
+                const data = await response.json();
+                loader.style.display = 'none';
+                if(data.code) {
+                    display.innerText = data.code;
+                } else {
+                    display.innerText = "Error!";
+                }
+            } catch (err) {
+                loader.style.display = 'none';
+                display.innerText = "Failed!";
+            }
+        }
+    </script>
+</body>
+</html>
