@@ -2,17 +2,132 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>JOEL-XMD QR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JOEL-XMD | QR Scanner</title>
     <style>
-        body { background: #000; color: #0ff; text-align: center; font-family: sans-serif; }
-        #qr-container { margin-top: 50px; border: 5px solid #0ff; display: inline-block; padding: 10px; background: white; }
+        body {
+            background: #000;
+            color: #00ffff;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .container {
+            background: #111;
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid #00ffff;
+            box-shadow: 0 0 20px #00ffff;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        h1 {
+            color: #ff00ff;
+            text-shadow: 0 0 10px #ff00ff;
+            margin-bottom: 20px;
+        }
+
+        #qr-display {
+            background: white;
+            padding: 10px;
+            border-radius: 10px;
+            display: inline-block;
+            min-height: 250px;
+            min-width: 250px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #qr-display img {
+            width: 250px;
+            height: 250px;
+        }
+
+        .loading-text {
+            color: #000;
+            font-weight: bold;
+        }
+
+        .instructions {
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #ccc;
+        }
+
+        .btn {
+            margin-top: 20px;
+            background: #ff00ff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background: #00ffff;
+            color: black;
+        }
     </style>
 </head>
 <body>
-    <h1>SCAN QR CODE</h1>
-    <div id="qr-container">
-        <p style="color: black;">QR Loading...</p>
+
+    <div class="container">
+        <h1>JOEL-XMD QR</h1>
+        <div id="qr-display">
+            <span class="loading-text">GENERATING QR...</span>
+        </div>
+        
+        <div class="instructions">
+            <p>1. Open WhatsApp on your phone</p>
+            <p>2. Tap Menu or Settings > Linked Devices</p>
+            <p>3. Tap on Link a Device</p>
+            <p>4. Point your phone to this screen</p>
+        </div>
+
+        <button class="btn" onclick="fetchQR()">REFRESH QR</button>
+        <br>
+        <a href="/" style="color: #ff00ff; margin-top: 15px; display: inline-block; font-size: 0.8em;">Back to Home</a>
     </div>
-    <p>Refresh if QR doesn't appear in 10 seconds.</p>
+
+    <script>
+        async function fetchQR() {
+            const display = document.getElementById('qr-display');
+            display.innerHTML = '<span class="loading-text">GENERATING QR...</span>';
+
+            try {
+                const response = await fetch('/getqr');
+                const data = await response.json();
+
+                if (data.qr) {
+                    display.innerHTML = `<img src="${data.qr}" alt="WhatsApp QR Code">`;
+                } else {
+                    display.innerHTML = '<span class="loading-text" style="color: red;">FAILED TO LOAD</span>';
+                }
+            } catch (err) {
+                console.error(err);
+                display.innerHTML = '<span class="loading-text" style="color: red;">SERVER ERROR</span>';
+            }
+        }
+
+        // Auto-load QR when page opens
+        fetchQR();
+
+        // Refresh QR every 30 seconds automatically to prevent expiration
+        setInterval(fetchQR, 30000);
+    </script>
+
 </body>
 </html>
