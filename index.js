@@ -15,7 +15,9 @@ import pino from 'pino'
 import { fileURLToPath } from 'url'
 import QRCode from 'qrcode'
 
+// Your Pastebin Key
 let pastebin = new PastebinAPI('WgRGngwD6YAaVHaoXpvWN1nnUYMXBA3S')
+
 const app = express()
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -25,10 +27,12 @@ app.use(express.static(__dirname))
 
 let PORT = process.env.PORT || 8000
 
-// --- ROUTES ---
+// --- HTML ROUTES ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
 app.get('/code', (req, res) => res.sendFile(path.join(__dirname, 'pair.html')))
 app.get('/qr', (req, res) => res.sendFile(path.join(__dirname, 'qr.html')))
+
+// --- API ENDPOINTS ---
 
 app.get('/pair', async (req, res) => {
   let phone = req.query.phone
@@ -37,6 +41,7 @@ app.get('/pair', async (req, res) => {
     const code = await startSession(phone, 'pair')
     res.json({ code })
   } catch (err) {
+    console.error("Pairing Error:", err)
     res.status(500).json({ error: 'Pairing Failed' })
   }
 })
@@ -46,31 +51,35 @@ app.get('/getqr', async (req, res) => {
     const qrData = await startSession(null, 'qr')
     res.json({ qr: qrData })
   } catch (err) {
+    console.error("QR Error:", err)
     res.status(500).json({ error: 'QR Failed' })
   }
 })
 
 // --- CORE LOGIC ---
+
 async function startSession(phone, method) {
-  // Use a unique ID for each attempt to avoid cache conflicts
-  const id = Math.random().toString(36).substring(7);
-  const sessionFolder = path.join(__dirname, 'auth', id);
+  // Create a clean, unique folder for every attempt
+  const id = Math.random().toString(36).substring(7)
+  const sessionFolder = path.join(__dirname, 'auth', id)
   
   if (!fs.existsSync(sessionFolder)) {
-    fs.mkdirSync(sessionFolder, { recursive: true });
+    fs.mkdirSync(sessionFolder, { recursive: true })
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder)
   const { version } = await fetchLatestBaileysVersion()
 
   return new Promise(async (resolve, reject) => {
+    // FIX: Handling the Baileys import correctly for all versions
     const socketFunction = makeWASocket.default || makeWASocket;
     
     const sock = socketFunction({
       version,
       printQRInTerminal: false,
       logger: pino({ level: 'silent' }),
-      browser: ["Ubuntu", "Chrome", "20.0.04"],
+      // Updated Browser ID for better stability
+      browser: ["Chrome (Linux)", "", ""], 
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
@@ -82,7 +91,7 @@ async function startSession(phone, method) {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
-      // Handle QR
+      // 1. Handle QR Method
       if (method === 'qr' && qr) {
         try {
           const qrImage = await QRCode.toDataURL(qr)
@@ -90,42 +99,53 @@ async function startSession(phone, method) {
         } catch (e) { reject(e) }
       }
 
-      // Handle Pairing Code
+      // 2. Handle Pairing Method (With Stabilization)
       if (method === 'pair' && !sock.authState.creds.registered) {
-        // Reduced delay to prevent timeout before user enters code
-        await delay(1500) 
+        // Critical: Wait 8 seconds for the socket to stabilize keys
+        console.log("Stabilizing for pairing...")
+        await delay(8000) 
         try {
-          const code = await sock.requestPairingCode(phone.replace(/[^0-9]/g, ''))
+          const cleanedNumber = phone.replace(/[^0-9]/g, '')
+          const code = await sock.requestPairingCode(cleanedNumber)
           resolve(code)
-        } catch (e) { reject(e) }
+        } catch (e) {
+          reject(e)
+        }
       }
 
+      // 3. Handle Successful Connection
       if (connection === 'open') {
-        // Essential: Wait for the session to fully "settle" on WA servers
-        await delay(10000)
+        console.log("Connected! Stabilizing session...")
+        await delay(10000) // Wait for WA to sync before grabbing creds
+
         try {
-          const credsPath = path.join(sessionFolder, 'creds.json');
+          const credsPath = path.join(sessionFolder, 'creds.json')
           const rawCreds = fs.readFileSync(credsPath, 'utf-8')
           const output = await pastebin.createPaste(rawCreds, 'JOEL-XMD-SESSION')
           const sessi = 'JOEL~XMD~' + output.split('https://pastebin.com/')[1]
           
           await sock.sendMessage(sock.user.id, { text: sessi })
           
-          // Cleanup after success
+          await sock.sendMessage(sock.user.id, {
+            text: `*╭──────────────━┈⊷*\n*║ ᴊᴏᴇʟ-xᴍᴅ sᴇssɪᴏɴ ɪᴅ*\n*╰───────────────━⊷*\n\n*sᴇssɪᴏɴ ᴄᴏɴɴᴇᴄᴛᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ!*\n\n*ᴛʜᴀɴᴋs ғᴏʀ ᴄʜᴏᴏsɪɴɢ ᴊᴏᴇʟ-ᴍᴅ*`
+          })
+
+          // Final cleanup and restart
           setTimeout(() => {
-              try {
+              if (fs.existsSync(sessionFolder)) {
                 fs.rmSync(sessionFolder, { recursive: true, force: true })
-              } catch (e) {}
+              }
               if (process.send) process.send('reset')
           }, 5000)
+
         } catch (e) {
-          console.error("Success handling error:", e)
+          console.error("Session Upload Failed:", e)
         }
       }
 
+      // 4. Handle Disconnection
       if (connection === 'close') {
         let reason = new Boom(lastDisconnect?.error)?.output.statusCode
-        // ONLY reset if it's not a temporary disconnect during pairing
         if (reason !== DisconnectReason.loggedOut && connection !== 'connecting') {
           if (process.send) process.send('reset')
         }
@@ -134,4 +154,4 @@ async function startSession(phone, method) {
   })
 }
 
-app.listen(PORT, () => console.log(`JOEL-XMD Online: ${PORT}`))
+app.listen(PORT, () => console.log(`JOEL-XMD API Running on PORT: ${PORT}`))
