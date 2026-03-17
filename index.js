@@ -15,7 +15,7 @@ import pino from 'pino'
 import { fileURLToPath } from 'url'
 import QRCode from 'qrcode'
 
-let pastebin = new PastebinAPI('dwT_LzCY4PZx1YEDfFUMJ4eYFuSH-mco')
+let pastebin = new PastebinAPI('WgRGngwD6YAaVHaoXpvWN1nnUYMXBA3S')
 const app = express()
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
