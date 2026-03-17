@@ -1,51 +1,44 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JOEL-XMD Pairing</title>
+    <title>JOEL-XMD | Pair</title>
     <style>
-        body { font-family: 'Arial', sans-serif; background: #000; color: #fff; text-align: center; padding: 20px; }
-        .box { background: #111; border: 2px solid #ff00ff; padding: 20px; border-radius: 10px; max-width: 400px; margin: auto; }
-        input { width: 80%; padding: 10px; margin: 10px 0; border-radius: 5px; border: none; }
-        button { background: #ff00ff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
-        #code-display { font-size: 2em; color: #00ffff; margin-top: 20px; font-weight: bold; letter-spacing: 5px; }
+        body { background: #000; color: #ff00ff; font-family: 'Courier New', monospace; text-align: center; }
+        .container { border: 2px solid #ff00ff; padding: 20px; display: inline-block; margin-top: 50px; border-radius: 10px; background: #111; }
+        input { padding: 10px; width: 80%; background: #222; border: 1px solid #0ff; color: #fff; margin: 10px 0; }
+        button { background: #ff00ff; color: white; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; }
+        #code { font-size: 2.5em; color: #0ff; margin-top: 20px; text-shadow: 0 0 10px #0ff; }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>Pairing Code</h2>
-        <p>Enter number with country code (e.g. 254...)</p>
+    <div class="container">
+        <h2>PAIRING CODE</h2>
         <input type="number" id="phone" placeholder="2547XXXXXXXX">
         <br>
-        <button onclick="getPairingCode()">GET CODE</button>
-        <div id="loading" style="display:none;">Generating...</div>
-        <div id="code-display"></div>
+        <button id="btn" onclick="getPair()">GET CODE</button>
+        <div id="code"></div>
     </div>
 
     <script>
-        async function getPairingCode() {
-            const phone = document.getElementById('phone').value;
-            const display = document.getElementById('code-display');
-            const loader = document.getElementById('loading');
-            
-            if(!phone) return alert("Enter Number!");
-            
-            loader.style.display = 'block';
-            display.innerText = '';
+        async function getPair() {
+            const num = document.getElementById('phone').value;
+            const btn = document.getElementById('btn');
+            const codeDiv = document.getElementById('code');
+            if(!num) return alert("Enter Number!");
+
+            btn.innerText = "GENERATING...";
+            btn.disabled = true;
 
             try {
-                const response = await fetch(`/pair?phone=${phone}`);
-                const data = await response.json();
-                loader.style.display = 'none';
-                if(data.code) {
-                    display.innerText = data.code;
-                } else {
-                    display.innerText = "Error!";
-                }
-            } catch (err) {
-                loader.style.display = 'none';
-                display.innerText = "Failed!";
+                const res = await fetch(`/pair?phone=${num}`);
+                const data = await res.json();
+                codeDiv.innerText = data.code || "FAILED";
+            } catch (e) {
+                codeDiv.innerText = "ERROR";
+            } finally {
+                btn.innerText = "GET CODE";
+                btn.disabled = false;
             }
         }
     </script>
